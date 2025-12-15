@@ -166,17 +166,56 @@ router.delete('/me/availability/:slotId',
 );
 
 // @route   GET /api/v1/users/tutors
-// @desc    Get list of all approved tutors
+// @desc    Get list of all approved tutors (or all alumni for hackathon demo)
 // @access  Private
 router.get('/tutors',
   asyncHandler(async (req, res) => {
+    // For hackathon demo: include all alumni, not just approved ones
     const tutors = await User.find({
       role: 'ALUMNI',
-      tutorStatus: 'APPROVED',
       isActive: true
-    }).select('profile verification.track calendarSlots gamification.level');
+    }).select('profile verification.track calendarSlots gamification.level tutorStatus');
     
     sendSuccess(res, { tutors }, 'Tutors retrieved');
+  })
+);
+
+// @route   GET /api/v1/users/tutors/availability
+// @desc    Get all tutors' availability (aggregated for student calendar)
+// @access  Private
+router.get('/tutors/availability',
+  asyncHandler(async (req, res) => {
+    const now = new Date();
+    
+    // Get all alumni with calendar slots
+    const tutors = await User.find({
+      role: 'ALUMNI',
+      isActive: true,
+      'calendarSlots.0': { $exists: true }
+    }).select('profile verification.track calendarSlots');
+    
+    // Flatten all available slots with tutor info
+    const allSlots = [];
+    for (const tutor of tutors) {
+      const tutorSlots = (tutor.calendarSlots || [])
+        .filter(slot => new Date(slot.end) > now && slot.status !== 'booked')
+        .map(slot => ({
+          _id: slot._id,
+          start: slot.start,
+          end: slot.end,
+          title: slot.title || 'Available',
+          status: slot.status,
+          tutorId: tutor._id,
+          tutorName: `${tutor.profile?.firstName} ${tutor.profile?.lastName}`,
+          track: tutor.verification?.track
+        }));
+      allSlots.push(...tutorSlots);
+    }
+    
+    // Sort by start time
+    allSlots.sort((a, b) => new Date(a.start) - new Date(b.start));
+    
+    sendSuccess(res, { availability: allSlots }, 'All tutor availability retrieved');
   })
 );
 
@@ -192,11 +231,19 @@ router.get('/tutors/:tutorId/availability',
       return sendError(res, 'Tutor not found', 404, 'TUTOR_NOT_FOUND');
     }
     
-    // Return only future available slots
+    // Return only future available slots (not booked)
     const now = new Date();
-    const availableSlots = (tutor.calendarSlots || []).filter(slot => 
-      new Date(slot.end) > now && slot.status !== 'booked'
-    );
+    const availableSlots = (tutor.calendarSlots || [])
+      .filter(slot => new Date(slot.end) > now && slot.status !== 'booked')
+      .map(slot => ({
+        _id: slot._id,
+        start: slot.start,
+        end: slot.end,
+        title: slot.title || 'Available',
+        status: slot.status,
+        tutorId: tutor._id,
+        tutorName: `${tutor.profile?.firstName} ${tutor.profile?.lastName}`
+      }));
     
     sendSuccess(res, { 
       tutor: {

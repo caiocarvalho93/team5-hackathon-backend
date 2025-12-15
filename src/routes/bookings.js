@@ -132,7 +132,11 @@ router.put('/:bookingId/reject',
     }
     
     booking.status = 'CANCELLED';
-    booking.cancellationReason = reason || 'Rejected by tutor';
+    booking.cancellation = {
+      cancelledBy: req.userId,
+      cancelledAt: new Date(),
+      reason: reason || 'Rejected by tutor'
+    };
     await booking.save();
     
     sendSuccess(res, { booking }, 'Booking rejected');
@@ -198,11 +202,15 @@ router.post('/',
   asyncHandler(async (req, res) => {
     const { tutorId, startDateTime, endDateTime, slotId, topic } = req.body;
     
-    // Validate tutor exists and is alumni
+    // Validate tutor exists and is alumni (relaxed for hackathon demo)
     const tutor = await User.findById(tutorId);
     if (!tutor || tutor.role !== 'ALUMNI') {
       return sendError(res, 'Invalid tutor', 400, 'INVALID_TUTOR');
     }
+    
+    // Log for debugging
+    console.log(`[BOOKING] Student ${req.userId} requesting session with tutor ${tutorId}`);
+    console.log(`[BOOKING] Time: ${startDateTime} to ${endDateTime}`);
     
     // Parse dates
     const sessionStart = new Date(startDateTime);
