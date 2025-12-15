@@ -2,6 +2,7 @@ const express = require('express');
 const Post = require('../models/Post');
 const Answer = require('../models/Answer');
 const User = require('../models/User');
+const gamificationService = require('../services/gamificationService');
 const { authenticate, authorize, checkActivityLimits } = require('../middleware/auth');
 const { validate, sanitizeInput, createPostSchema, updatePostSchema, createAnswerSchema } = require('../middleware/validation');
 const { asyncHandler, sendSuccess, sendError } = require('../middleware/errorHandler');
@@ -170,18 +171,17 @@ router.post('/',
     await post.save();
     await post.populate('authorId', 'profile role gamification.level');
     
-    // Update user stats
+    // Award XP for posting using gamification service
     try {
-      await User.findByIdAndUpdate(req.userId, {
-        $inc: { 'gamification.totalPosts': 1 }
-      });
-      
-      // Award XP for posting
-      if (req.user.addXP) {
-        await req.user.addXP(5, 'Created post');
-      }
+      const xpResult = await gamificationService.awardXP(
+        req.userId,
+        'POST_QUESTION',
+        null,
+        { postId: post._id, idempotencyKey: `post_${post._id}` }
+      );
+      console.log(`XP awarded for post: ${xpResult.xpAwarded} XP to user ${req.userId}`);
     } catch (xpErr) {
-      console.log('XP update skipped:', xpErr.message);
+      console.log('XP update error:', xpErr.message);
     }
     
     sendSuccess(res, { post }, 'Post created successfully', 201);
@@ -316,12 +316,14 @@ router.post('/:postId/upvote',
       // Award XP to post author (but not if upvoting own post)
       if (!post.authorId.equals(req.userId)) {
         try {
-          const author = await User.findById(post.authorId);
-          if (author && author.addXP) {
-            await author.addXP(2, 'Post upvoted');
-          }
+          await gamificationService.awardXP(
+            post.authorId,
+            'POST_UPVOTE',
+            2,
+            { postId: post._id, upvoterId: req.userId, idempotencyKey: `upvote_${post._id}_${req.userId}` }
+          );
         } catch (xpErr) {
-          console.log('XP update skipped:', xpErr.message);
+          console.log('XP update error:', xpErr.message);
         }
       }
     }
@@ -373,17 +375,17 @@ router.post('/:postId/answers',
       $inc: { 'analytics.answers': 1 }
     });
     
-    // Update user stats and award XP
+    // Award XP for answering using gamification service
     try {
-      await User.findByIdAndUpdate(req.userId, {
-        $inc: { 'gamification.totalAnswers': 1 }
-      });
-      
-      if (req.user.addXP) {
-        await req.user.addXP(10, 'Answered question');
-      }
+      const xpResult = await gamificationService.awardXP(
+        req.userId,
+        'QA_ANSWER',
+        null,
+        { postId, answerId: answer._id, idempotencyKey: `answer_${answer._id}` }
+      );
+      console.log(`XP awarded for answer: ${xpResult.xpAwarded} XP to user ${req.userId}`);
     } catch (xpErr) {
-      console.log('XP update skipped:', xpErr.message);
+      console.log('XP update error:', xpErr.message);
     }
     
     sendSuccess(res, { answer }, 'Answer added successfully', 201);
@@ -466,9 +468,15 @@ router.post('/answers/:answerId/upvote',
       
       // Award XP to answer author (but not if upvoting own answer)
       if (!answer.authorId.equals(req.userId)) {
-        const author = await User.findById(answer.authorId);
-        if (author) {
-          await author.addXP(3, 'Answer upvoted');
+        try {
+          await gamificationService.awardXP(
+            answer.authorId,
+            'ANSWER_UPVOTE',
+            3,
+            { answerId: answer._id, upvoterId: req.userId, idempotencyKey: `answer_upvote_${answer._id}_${req.userId}` }
+          );
+        } catch (xpErr) {
+          console.log('XP update error:', xpErr.message);
         }
       }
     }
@@ -514,9 +522,15 @@ router.post('/answers/:answerId/helpful',
     await answer.save();
     
     // Award bonus XP to answer author
-    const author = await User.findById(answer.authorId);
-    if (author) {
-      await author.addXP(5, 'Answer marked as helpful');
+    try {
+      await gamificationService.awardXP(
+        answer.authorId,
+        'ANSWER_HELPFUL',
+        5,
+        { answerId: answer._id, markedBy: req.userId, idempotencyKey: `helpful_${answer._id}_${req.userId}` }
+      );
+    } catch (xpErr) {
+      console.log('XP update error:', xpErr.message);
     }
     
     sendSuccess(res, { 

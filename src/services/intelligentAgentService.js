@@ -50,7 +50,7 @@ class IntelligentAgentService {
     this.client = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY
     });
-    this.model = 'gpt-4-1106-preview';
+    this.model = 'gpt-3.5-turbo'; // Changed for reliability
     this.maxRetries = 2;
     
     // Bypass keywords - these get DIRECT answers

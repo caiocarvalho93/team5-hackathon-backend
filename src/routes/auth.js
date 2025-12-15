@@ -8,18 +8,18 @@ const { z } = require('zod');
 
 const router = express.Router();
 
-// Rate limiting for auth endpoints
-const authRateLimit = createRateLimit(
-  15 * 60 * 1000, // 15 minutes
-  5, // 5 attempts per window
-  'Too many authentication attempts'
-);
+// Rate limiting DISABLED for hackathon demo
+// const authRateLimit = createRateLimit(
+//   15 * 60 * 1000, // 15 minutes
+//   5, // 5 attempts per window
+//   'Too many authentication attempts'
+// );
 
-const passwordResetRateLimit = createRateLimit(
-  60 * 60 * 1000, // 1 hour
-  3, // 3 attempts per hour
-  'Too many password reset attempts'
-);
+// const passwordResetRateLimit = createRateLimit(
+//   60 * 60 * 1000, // 1 hour
+//   3, // 3 attempts per hour
+//   'Too many password reset attempts'
+// );
 
 // Validation schemas
 const registerSchema = z.object({
@@ -55,7 +55,6 @@ const resetPasswordSchema = z.object({
 // @desc    Register new user
 // @access  Public
 router.post('/register', 
-  authRateLimit,
   sanitizeInput,
   validate(registerSchema),
   asyncHandler(async (req, res) => {
@@ -73,7 +72,6 @@ router.post('/register',
 // @desc    Login user
 // @access  Public
 router.post('/login',
-  authRateLimit,
   sanitizeInput,
   validate(loginSchema),
   asyncHandler(async (req, res) => {
@@ -93,7 +91,6 @@ router.post('/login',
 // @desc    Refresh access token
 // @access  Public
 router.post('/refresh',
-  authRateLimit,
   validate(refreshTokenSchema),
   asyncHandler(async (req, res) => {
     const result = await authService.refreshToken(req.body.refreshToken);
@@ -151,7 +148,6 @@ router.post('/change-password',
 // @desc    Request password reset
 // @access  Public
 router.post('/forgot-password',
-  passwordResetRateLimit,
   sanitizeInput,
   validate(z.object({ email: z.string().email() })),
   asyncHandler(async (req, res) => {
@@ -167,7 +163,6 @@ router.post('/forgot-password',
 // @desc    Reset password with token
 // @access  Public
 router.post('/reset-password',
-  passwordResetRateLimit,
   validate(resetPasswordSchema),
   asyncHandler(async (req, res) => {
     await authService.resetPassword(req.body.resetToken, req.body.newPassword);

@@ -1,6 +1,7 @@
 const express = require('express');
 const Booking = require('../models/Booking');
 const User = require('../models/User');
+const gamificationService = require('../services/gamificationService');
 const { authenticate, authorize, bookingRateLimit } = require('../middleware/auth');
 const { validate, sanitizeInput, createBookingSchema, updateBookingSchema, bookingFeedbackSchema } = require('../middleware/validation');
 const { asyncHandler, sendSuccess, sendError } = require('../middleware/errorHandler');
@@ -325,22 +326,27 @@ router.put('/:bookingId',
         booking.status = newStatus;
         booking.completedAt = new Date();
         
-        // Award XP for completed session
-        const student = await User.findById(booking.studentId);
-        const tutor = await User.findById(booking.tutorId);
-        
-        if (student) {
-          await student.updateOne({
-            $inc: { 'gamification.totalSessions': 1 }
-          });
-          await student.addXP(20, 'Completed tutoring session');
-        }
-        
-        if (tutor) {
-          await tutor.updateOne({
-            $inc: { 'gamification.totalSessions': 1 }
-          });
-          await tutor.addXP(25, 'Conducted tutoring session');
+        // Award XP for completed session using gamification service
+        try {
+          // Award XP to student
+          await gamificationService.awardXP(
+            booking.studentId,
+            'TUTORING_SESSION',
+            20,
+            { bookingId: booking._id, role: 'student', idempotencyKey: `session_student_${booking._id}` }
+          );
+          
+          // Award XP to tutor (more XP for conducting)
+          await gamificationService.awardXP(
+            booking.tutorId,
+            'TUTORING_SESSION',
+            100,
+            { bookingId: booking._id, role: 'tutor', idempotencyKey: `session_tutor_${booking._id}` }
+          );
+          
+          console.log(`Session completed: XP awarded to student and tutor for booking ${booking._id}`);
+        } catch (xpErr) {
+          console.log('XP update error:', xpErr.message);
         }
       }
       // Admins can change to any status
@@ -414,9 +420,15 @@ router.post('/:bookingId/feedback',
       
       // Award XP to tutor based on rating
       if (req.body.rating >= 4) {
-        const tutor = await User.findById(booking.tutorId);
-        if (tutor) {
-          await tutor.addXP(req.body.rating * 2, 'Positive session feedback');
+        try {
+          await gamificationService.awardXP(
+            booking.tutorId,
+            'POSITIVE_FEEDBACK',
+            req.body.rating * 2,
+            { bookingId: booking._id, rating: req.body.rating, idempotencyKey: `feedback_${booking._id}_${req.userId}` }
+          );
+        } catch (xpErr) {
+          console.log('XP update error:', xpErr.message);
         }
       }
     } else if (isTutor) {

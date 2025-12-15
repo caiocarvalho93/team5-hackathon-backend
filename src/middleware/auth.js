@@ -60,6 +60,10 @@ const authenticate = async (req, res, next) => {
     logger.error('Authentication failed:', error);
     
     if (error.name === 'JsonWebTokenError') {
+      // Log first 20 chars of token for debugging (never full token)
+      const authHeader = req.headers.authorization;
+      const tokenPreview = authHeader ? authHeader.substring(7, 27) + '...' : 'NO_TOKEN';
+      logger.error(`JWT malformed - token preview: ${tokenPreview}`);
       return res.status(401).json({
         success: false,
         error: {
@@ -273,23 +277,14 @@ const createRateLimit = (windowMs, maxRequests, message) => {
 };
 
 // Specific rate limits for different endpoints
-const postRateLimit = createRateLimit(
-  60 * 60 * 1000, // 1 hour
-  1, // 1 post per hour
-  'You can only create 1 post per hour'
-);
+// Post rate limit DISABLED for hackathon demo
+const postRateLimit = (req, res, next) => next();
 
-const aiRateLimit = createRateLimit(
-  60 * 60 * 1000, // 1 hour
-  100, // 100 AI requests per hour - generous for hackathon demo
-  'AI request limit exceeded'
-);
+// AI rate limit DISABLED for hackathon demo
+const aiRateLimit = (req, res, next) => next();
 
-const bookingRateLimit = createRateLimit(
-  7 * 24 * 60 * 60 * 1000, // 1 week
-  1, // 1 booking per week
-  'You can only book 1 session per week'
-);
+// Booking rate limit DISABLED for hackathon demo
+const bookingRateLimit = (req, res, next) => next();
 
 // User ownership check
 const checkOwnership = (resourceField = 'userId') => {

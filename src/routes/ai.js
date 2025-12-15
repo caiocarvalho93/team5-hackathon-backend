@@ -2,7 +2,7 @@ const express = require('express');
 const { z } = require('zod');
 const openaiService = require('../services/openaiService');
 const intelligentAgentService = require('../services/intelligentAgentService');
-const { authenticate, authorize, aiRateLimit } = require('../middleware/auth');
+const { authenticate, authorize, aiRateLimit, optionalAuth } = require('../middleware/auth');
 const { validate, sanitizeInput } = require('../middleware/validation');
 const { asyncHandler, sendSuccess, sendError } = require('../middleware/errorHandler');
 const { aiTutorHelpSchema, aiMambaHelpSchema, aiFeedbackSchema } = require('../middleware/validation');
@@ -13,8 +13,10 @@ const AgentTrainingData = require('../models/AgentTrainingData');
 
 const router = express.Router();
 
-// Apply authentication and rate limiting to all AI routes
-router.use(authenticate);
+// Apply OPTIONAL authentication and rate limiting to all AI routes
+// Changed from authenticate to optionalAuth for hackathon demo
+// This allows AI to work even if token is malformed/missing
+router.use(optionalAuth);
 router.use(aiRateLimit);
 router.use(sanitizeInput);
 
@@ -23,9 +25,9 @@ const TutorCareNetwork = require('../models/TutorCareNetwork');
 
 // @route   POST /api/v1/ai/alumni-tutor-help
 // @desc    Alumni AI Tutoring Help
-// @access  Private (Alumni only)
+// @access  Private (All roles for hackathon demo)
 router.post('/alumni-tutor-help',
-  authorize('ALUMNI'),
+  // authorize('ALUMNI'), // DISABLED for hackathon demo
   validate(aiTutorHelpSchema),
   asyncHandler(async (req, res) => {
     const result = await openaiService.alumniTutorHelp(req.userId, req.body);
@@ -63,9 +65,9 @@ const TutorAlertService = require('../services/TutorAlertService');
 
 // @route   POST /api/v1/ai/student-mamba-help
 // @desc    Student AI Mamba Helper
-// @access  Private (Students only)
+// @access  Private (All roles for hackathon demo)
 router.post('/student-mamba-help',
-  authorize('STUDENT'),
+  // authorize('STUDENT'), // DISABLED for hackathon demo
   validate(aiMambaHelpSchema),
   asyncHandler(async (req, res) => {
     const result = await openaiService.studentMambaHelper(req.userId, req.body);
@@ -321,10 +323,10 @@ router.get('/stats/user',
 
 // @route   POST /api/v1/ai/smart-help
 // @desc    Smart AI help - auto-routes to Mamba Coach or Deployment Helper
-// @access  Private (Students only)
+// @access  Private (All roles for hackathon demo)
 // @note    This is the MAIN endpoint - it detects if you need hints or direct answers
 router.post('/smart-help',
-  authorize('STUDENT'),
+  // authorize('STUDENT'), // DISABLED for hackathon demo
   validate(aiMambaHelpSchema),
   asyncHandler(async (req, res) => {
     const result = await intelligentAgentService.processStudentQuestion(req.userId, req.body);
