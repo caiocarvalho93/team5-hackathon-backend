@@ -132,37 +132,57 @@ router.get('/feed',
 
 // @route   POST /api/v1/posts
 // @desc    Create new post
-// @access  Private
+// @access  Private (Students for QNA/COMMUNITY, Alumni for ALUMNI_PROFESSIONAL)
 router.post('/',
-  checkActivityLimits,
-  validate(createPostSchema),
   asyncHandler(async (req, res) => {
+    const { feedType, track, title, content, subcategory, tags, priority, difficulty } = req.body;
+    
+    // Validate required fields
+    if (!feedType || !track || !title || !content) {
+      return sendError(res, 'Missing required fields: feedType, track, title, content', 400, 'VALIDATION_ERROR');
+    }
+    
+    if (title.length < 5 || title.length > 200) {
+      return sendError(res, 'Title must be 5-200 characters', 400, 'VALIDATION_ERROR');
+    }
+    
+    if (content.length < 10 || content.length > 5000) {
+      return sendError(res, 'Content must be 10-5000 characters', 400, 'VALIDATION_ERROR');
+    }
+    
     // Check feed permissions
-    if (req.body.feedType === 'ALUMNI_PROFESSIONAL' && req.user.role !== 'ALUMNI' && req.user.role !== 'ADMIN') {
+    if (feedType === 'ALUMNI_PROFESSIONAL' && req.user.role !== 'ALUMNI' && req.user.role !== 'ADMIN') {
       return sendError(res, 'Only Alumni can post in Professional feed', 403, 'ACCESS_DENIED');
     }
     
     const post = new Post({
-      ...req.body,
+      feedType,
+      track,
+      title,
+      content,
+      subcategory: subcategory || '',
+      tags: tags || [],
+      priority: priority || 'NORMAL',
+      difficulty: difficulty || 'INTERMEDIATE',
       authorId: req.userId
     });
     
     await post.save();
     await post.populate('authorId', 'profile role gamification.level');
     
-    // Update user activity tracking
-    const feedType = req.body.feedType;
-    const updateField = feedType === 'QNA' ? 'lastQAPostAt' : 
-                      feedType === 'COMMUNITY' ? 'lastCommunityPostAt' : 
-                      'lastAlumniPostAt';
-    
-    await req.user.updateOne({
-      [`activityControl.${updateField}`]: new Date(),
-      $inc: { 'gamification.totalPosts': 1 }
-    });
-    
-    // Award XP for posting
-    await req.user.addXP(5, 'Created post');
+    // Update user stats
+    try {
+      await User.findByIdAndUpdate(req.userId, {
+        $inc: { 'gamification.totalPosts': 1 }
+      });
+      
+      // Award XP for posting
+      if (req.user.addXP) {
+        await req.user.addXP(5, 'Created post');
+      }
+    } catch (xpErr) {
+      console.log('XP update skipped:', xpErr.message);
+    }
     
     sendSuccess(res, { post }, 'Post created successfully', 201);
   })
@@ -276,23 +296,32 @@ router.post('/:postId/upvote',
       return sendError(res, 'Post not found', 404, 'POST_NOT_FOUND');
     }
     
+    // Initialize arrays if they don't exist
+    if (!post.interactions) post.interactions = {};
+    if (!post.interactions.upvotedBy) post.interactions.upvotedBy = [];
+    if (!post.analytics) post.analytics = { upvotes: 0 };
+    
     // Check if user already upvoted
-    const hasUpvoted = post.analytics.upvotedBy.includes(req.userId);
+    const hasUpvoted = post.interactions.upvotedBy.some(id => id.toString() === req.userId.toString());
     
     if (hasUpvoted) {
       // Remove upvote
-      post.analytics.upvotedBy.pull(req.userId);
-      post.analytics.upvotes = Math.max(0, post.analytics.upvotes - 1);
+      post.interactions.upvotedBy = post.interactions.upvotedBy.filter(id => id.toString() !== req.userId.toString());
+      post.analytics.upvotes = Math.max(0, (post.analytics.upvotes || 0) - 1);
     } else {
       // Add upvote
-      post.analytics.upvotedBy.push(req.userId);
-      post.analytics.upvotes += 1;
+      post.interactions.upvotedBy.push(req.userId);
+      post.analytics.upvotes = (post.analytics.upvotes || 0) + 1;
       
       // Award XP to post author (but not if upvoting own post)
       if (!post.authorId.equals(req.userId)) {
-        const author = await User.findById(post.authorId);
-        if (author) {
-          await author.addXP(2, 'Post upvoted');
+        try {
+          const author = await User.findById(post.authorId);
+          if (author && author.addXP) {
+            await author.addXP(2, 'Post upvoted');
+          }
+        } catch (xpErr) {
+          console.log('XP update skipped:', xpErr.message);
         }
       }
     }
@@ -310,9 +339,14 @@ router.post('/:postId/upvote',
 // @desc    Add answer to post
 // @access  Private (Alumni only for Q&A posts)
 router.post('/:postId/answers',
-  validate(createAnswerSchema),
   asyncHandler(async (req, res) => {
     const { postId } = req.params;
+    const { content } = req.body;
+    
+    // Validate content
+    if (!content || content.length < 10 || content.length > 3000) {
+      return sendError(res, 'Answer content must be 10-3000 characters', 400, 'VALIDATION_ERROR');
+    }
     
     const post = await Post.findById(postId);
     
@@ -320,24 +354,19 @@ router.post('/:postId/answers',
       return sendError(res, 'Post not found', 404, 'POST_NOT_FOUND');
     }
     
-    // Check if Alumni can answer Q&A posts
+    // Only Alumni can answer Q&A posts
     if (post.feedType === 'QNA' && req.user.role === 'STUDENT') {
-      return sendError(res, 'Only Alumni can answer Q&A posts', 403, 'ACCESS_DENIED');
-    }
-    
-    // Check if Alumni is approved for Q&A answers
-    if (post.feedType === 'QNA' && req.user.role === 'ALUMNI' && req.user.tutorStatus !== 'APPROVED') {
-      return sendError(res, 'Only approved Alumni can answer Q&A posts', 403, 'APPROVAL_REQUIRED');
+      return sendError(res, 'Only Alumni mentors can answer Q&A posts', 403, 'ACCESS_DENIED');
     }
     
     const answer = new Answer({
       postId,
       authorId: req.userId,
-      ...req.body
+      content
     });
     
     await answer.save();
-    await answer.populate('authorId', 'profile role gamification.level verification.track');
+    await answer.populate('authorId', 'profile role');
     
     // Update post answer count
     await Post.findByIdAndUpdate(postId, {
@@ -345,11 +374,17 @@ router.post('/:postId/answers',
     });
     
     // Update user stats and award XP
-    await req.user.updateOne({
-      $inc: { 'gamification.totalAnswers': 1 }
-    });
-    
-    await req.user.addXP(10, 'Answered question');
+    try {
+      await User.findByIdAndUpdate(req.userId, {
+        $inc: { 'gamification.totalAnswers': 1 }
+      });
+      
+      if (req.user.addXP) {
+        await req.user.addXP(10, 'Answered question');
+      }
+    } catch (xpErr) {
+      console.log('XP update skipped:', xpErr.message);
+    }
     
     sendSuccess(res, { answer }, 'Answer added successfully', 201);
   })
