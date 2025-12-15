@@ -13,6 +13,20 @@ const router = express.Router();
 router.use(authenticate);
 router.use(sanitizeInput);
 
+// @route   GET /api/v1/posts/mine
+// @desc    Get current user's posts
+// @access  Private
+router.get('/mine',
+  asyncHandler(async (req, res) => {
+    const posts = await Post.find({ authorId: req.userId })
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .populate('authorId', 'profile role');
+    
+    sendSuccess(res, { posts }, 'Your posts retrieved');
+  })
+);
+
 // @route   GET /api/v1/posts/feed
 // @desc    Get posts feed with filtering
 // @access  Private
@@ -79,9 +93,30 @@ router.get('/feed',
         .populate('authorId', 'profile role gamification.level')
         .sort(sortOptions)
         .skip(skip)
-        .limit(parseInt(limit)),
+        .limit(parseInt(limit))
+        .lean(),
       Post.countDocuments(query)
     ]);
+    
+    // Load answers for each post
+    const postIds = posts.map(p => p._id);
+    const answers = await Answer.find({ postId: { $in: postIds } })
+      .populate('authorId', 'profile role')
+      .sort({ createdAt: -1 })
+      .lean();
+    
+    // Group answers by post
+    const answersByPost = {};
+    answers.forEach(a => {
+      const key = a.postId.toString();
+      if (!answersByPost[key]) answersByPost[key] = [];
+      answersByPost[key].push(a);
+    });
+    
+    // Attach answers to posts
+    posts.forEach(p => {
+      p.answers = answersByPost[p._id.toString()] || [];
+    });
     
     sendSuccess(res, {
       posts,
